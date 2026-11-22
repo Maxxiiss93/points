@@ -130,7 +130,9 @@
   .form input, .form select { width: 100%; height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--edge); background: var(--white); color: var(--ink); font: var(--w-text) 16px var(--font); }
   .form .btn { height: 44px; }
   /* Operar: formulario + tarjeta de revisión */
-  .op { grid-template-columns: 1.4fr 1.4fr 1fr 1fr auto; }
+  .op { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+  #orders-table th:nth-child(3), #orders-table td:nth-child(3) { padding-left: 32px; }
+  .op-hint { color: var(--subdued); font-size: 14px; margin: 12px 0 0; min-height: 21px; }
   .op[aria-disabled="true"] { opacity: .55; }
   .review { margin-top: 16px; padding: 24px; background: var(--white); border: 1px solid var(--edge); border-radius: 12px; }
   .review h3 { font: var(--w-strong) 20px/1.25 var(--font); letter-spacing: .01em; margin: 0 0 4px; text-wrap: balance; }
@@ -253,21 +255,24 @@
 
     <section class="chapter" aria-labelledby="h-op">
       <div class="chapter-head">
-        <h2 id="h-op">Operar fondo de liquidez</h2>
+        <h2 id="h-op">Operar</h2>
         <button type="button" class="btn btn-quiet" id="pause-btn">Pausar operaciones</button>
       </div>
       <p class="lead" id="op-lead">Suscribí o rescatá el fondo desde acá. Nada se envía a IOL hasta que confirmes.</p>
       <div class="paused" id="paused" hidden><strong style="font-weight:var(--w-strong)">Operaciones pausadas.</strong> No se puede revisar ni enviar ninguna orden hasta que las reanudes.</div>
       <form id="op-form" class="form op">
         <div><label for="op-kind">Operación</label>
-          <select id="op-kind"><option value="subscription">Suscribir (invertir pesos)</option><option value="redemption">Rescatar (volver a pesos)</option></select></div>
-        <div><label for="op-symbol">Fondo</label><select id="op-symbol"></select></div>
+          <select id="op-kind"><option value="subscription">Suscribir fondo (invertir pesos)</option><option value="redemption">Rescatar fondo (volver a pesos)</option><option value="repo">Colocar caución (tasa fija)</option></select></div>
+        <div id="op-symbol-wrap"><label for="op-symbol">Fondo</label><select id="op-symbol"></select></div>
+        <div id="op-term-wrap" hidden><label for="op-term">Plazo</label><select id="op-term"><option value="">Cargando plazos…</option></select></div>
         <div id="op-amount-wrap"><label for="op-amount">Monto en pesos</label><input id="op-amount" type="number" inputmode="decimal" step="0.01" min="0"></div>
         <div id="op-redeem-wrap" hidden><label for="op-redeem">Cuánto rescatar</label>
           <select id="op-redeem"><option value="all">Todo</option><option value="qty">Algunas cuotapartes</option></select></div>
         <div id="op-qty-wrap" hidden><label for="op-qty">Cuotapartes</label><input id="op-qty" type="number" inputmode="decimal" step="any" min="0"></div>
+        <div id="op-rate-wrap" hidden><label for="op-rate">Tasa anual mínima %</label><input id="op-rate" type="number" inputmode="decimal" step="0.01" min="0" placeholder="Ej.: 21"></div>
         <button type="submit" class="btn btn-primary" id="op-review-btn">Revisar orden</button>
       </form>
+      <p class="op-hint" id="op-hint" hidden></p>
       <div class="review" id="review" hidden aria-live="polite"></div>
 
       <div class="scroller" id="orders-table" style="margin-top:24px" hidden>
@@ -340,7 +345,7 @@
       <div class="empty" id="log-empty" hidden><div><b>Sin registros</b>Cada sincronización queda anotada acá con su resultado.</div></div>
     </section>
 
-    <p class="foot">Este panel solo envía órdenes del fondo de liquidez, y únicamente cuando las confirmás. No opera acciones, bonos, CEDEARs ni cauciones.</p>
+    <p class="foot">Este panel solo envía órdenes del fondo de liquidez y cauciones colocadoras en pesos, y únicamente cuando las confirmás. No opera acciones, bonos ni CEDEARs.</p>
   </main>
 </div>
 
@@ -539,8 +544,11 @@ const ORDER_STATE = {
   reviewed: ["Sin confirmar", ""], rejected: ["Rechazada", "loss"], expired: ["Vencida", ""],
   sending: ["Enviando", ""], sent: ["Enviada a IOL", "gain"], unknown: ["Resultado en duda", "loss"], cancelled: ["Anulada", ""],
 };
-const orderLabel = (o) => (o.kind === "subscription" ? "Suscripción" : "Rescate") + " · " + o.symbol;
-const orderAmount = (o) => o.kind === "subscription" ? money(o.amount) : o.redeem_all ? "Todo" : numf(o.quantity, 4) + " cuotapartes";
+const orderLabel = (o) => o.kind === "repo"
+  ? `Caución · ${o.term_days} ${o.term_days === 1 ? "día" : "días"} · ${numf(o.rate)} %`
+  : (o.kind === "subscription" ? "Suscripción" : "Rescate") + " · " + o.symbol;
+const orderAmount = (o) => o.kind !== "redemption" ? money(o.amount) : o.redeem_all ? "Todo" : numf(o.quantity, 4) + " cuotapartes";
+const fnFor = (kind) => (kind === "repo" ? "iol-repo" : "iol-fci");
 
 function renderTrading(s, funds, orders) {
   settings = s;
@@ -551,7 +559,7 @@ function renderTrading(s, funds, orders) {
   [...$("op-form").elements].forEach((e) => (e.disabled = paused));
   if (paused) closeReview();
   $("op-lead").textContent = s
-    ? `Suscribí o rescatá el fondo desde acá. Nada se envía a IOL hasta que confirmes. Tope: ${money(s.max_per_order_ars)} por orden y ${money(s.max_per_day_ars)} por día.`
+    ? `Fondo de liquidez y cauciones en pesos. Nada se envía a IOL hasta que confirmes. Tope: ${money(s.max_per_order_ars)} por orden y ${money(s.max_per_day_ars)} por día, sumando ambos. Cauciones de hasta ${s.max_repo_days ?? 7} días.`
     : "No pude leer los ajustes de operación.";
   const sel = $("op-symbol"), current = sel.value;
   sel.replaceChildren(...funds.map((f) => { const o = el("option", "", `${f.symbol} · ${f.name}`); o.value = f.symbol; return o; }));
@@ -574,7 +582,7 @@ function renderTrading(s, funds, orders) {
       b.addEventListener("click", async () => {
         if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.textContent = "¿Anular en IOL?"; setTimeout(() => { b.dataset.armed = ""; b.textContent = "Anular"; }, 4000); return; }
         b.disabled = true;
-        const r = await callFci({ action: "cancel", order_id: o.id });
+        const r = await callFn(fnFor(o.kind), { action: "cancel", order_id: o.id });
         await load();
         if (r.ok) notice("La orden quedó anulada en IOL.", "ok"); else notice(r.error);
       });
@@ -585,8 +593,8 @@ function renderTrading(s, funds, orders) {
   }));
 }
 
-async function callFci(body) {
-  const { data, error } = await sb.functions.invoke("iol-fci", { method: "POST", body });
+async function callFn(name, body) {
+  const { data, error } = await sb.functions.invoke(name, { method: "POST", body });
   if (error) {
     let payload = null;
     try { payload = await error.context.json(); } catch (_) { /* sin cuerpo */ }
@@ -597,13 +605,54 @@ async function callFci(body) {
 
 function closeReview() { pendingOrder = null; $("review").hidden = true; $("review").replaceChildren(); }
 
+let terms = null;
+function hint(text) { $("op-hint").textContent = text || ""; $("op-hint").hidden = !text; }
+
+async function loadTerms() {
+  const sel = $("op-term");
+  sel.replaceChildren(el("option", "", "Cargando plazos…"));
+  const r = await callFn("iol-repo", { action: "terms" });
+  if (!r.ok) { terms = null; sel.replaceChildren(el("option", "", "No disponibles")); hint("No pude traer los plazos de caución: " + r.error); return; }
+  terms = r.terms;
+  if (!terms.length) { sel.replaceChildren(el("option", "", "Sin plazos")); hint(`IOL no informa plazos de hasta ${r.max_repo_days} días en este momento. Suele pasar fuera del horario de mercado.`); return; }
+  sel.replaceChildren(...terms.map((t) => {
+    const o = el("option", "", `${t.term_days} ${t.term_days === 1 ? "día" : "días"}${t.due_date ? " · vence " + new Date(t.due_date + "T12:00:00").toLocaleDateString("es-AR", { day: "numeric", month: "short" }) : ""}`);
+    o.value = t.term_id;
+    return o;
+  }));
+  loadQuotes();
+}
+
+async function loadQuotes() {
+  const termId = Number($("op-term").value);
+  if (!termId) return;
+  const t = (terms || []).find((x) => x.term_id === termId);
+  hint("Consultando tasas…");
+  const r = await callFn("iol-repo", { action: "quotes", term_id: termId });
+  if (Number($("op-term").value) !== termId || $("op-kind").value !== "repo") return;
+  const min = t && t.min_amount ? ` Mínimo ${money(t.min_amount)}.` : "";
+  if (!r.ok) { hint("No pude traer las tasas del mercado." + min); return; }
+  const parts = [];
+  if (r.bid_rate !== null) parts.push(`punta colocadora ${numf(r.bid_rate)} %`);
+  if (r.ask_rate !== null) parts.push(`punta tomadora ${numf(r.ask_rate)} %`);
+  hint((parts.length ? "Tasas en el mercado ahora: " + parts.join(" · ") + "." : "El mercado no muestra tasas para ese plazo ahora.") + min + " La plata queda inmovilizada hasta el vencimiento.");
+}
+
 function syncOpFields() {
-  const redeem = $("op-kind").value === "redemption";
+  const kind = $("op-kind").value;
+  const redeem = kind === "redemption", repo = kind === "repo";
+  $("op-symbol-wrap").hidden = repo;
+  $("op-term-wrap").hidden = !repo;
+  $("op-rate-wrap").hidden = !repo;
   $("op-amount-wrap").hidden = redeem;
   $("op-redeem-wrap").hidden = !redeem;
   $("op-qty-wrap").hidden = !redeem || $("op-redeem").value !== "qty";
+  hint("");
   closeReview();
+  if (repo) loadTerms();
 }
+$("op-term").addEventListener("change", () => { closeReview(); loadQuotes(); });
+$("op-rate").addEventListener("input", closeReview);
 $("op-kind").addEventListener("change", syncOpFields);
 $("op-redeem").addEventListener("change", syncOpFields);
 ["op-amount", "op-qty", "op-symbol"].forEach((id) => $(id).addEventListener("input", closeReview));
@@ -612,7 +661,15 @@ $("op-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const kind = $("op-kind").value, symbol = $("op-symbol").value;
   const body = { action: "review", kind, symbol };
-  if (kind === "subscription") {
+  if (kind === "repo") {
+    delete body.symbol;
+    body.term_id = Number($("op-term").value);
+    body.amount = Number($("op-amount").value);
+    body.rate = Number($("op-rate").value);
+    if (!body.term_id) { notice("Elegí un plazo para la caución."); return; }
+    if (!(body.amount > 0)) { notice("Ingresá el monto que querés colocar."); $("op-amount").focus(); return; }
+    if (!(body.rate > 0)) { notice("Ingresá la tasa anual mínima que aceptás."); $("op-rate").focus(); return; }
+  } else if (kind === "subscription") {
     body.amount = Number($("op-amount").value);
     if (!(body.amount > 0)) { notice("Ingresá el monto que querés suscribir."); $("op-amount").focus(); return; }
   } else if ($("op-redeem").value === "all") {
@@ -624,7 +681,7 @@ $("op-form").addEventListener("submit", async (e) => {
   notice("");
   const btn = $("op-review-btn");
   btn.disabled = true; btn.textContent = "Revisando…";
-  const r = await callFci(body);
+  const r = await callFn(fnFor(kind), body);
   btn.disabled = false; btn.textContent = "Revisar orden";
   if (!r.ok) { closeReview(); notice(r.error); load(); return; }
   showReview(body, r);
@@ -634,23 +691,43 @@ $("op-form").addEventListener("submit", async (e) => {
 function showReview(body, r) {
   const box = $("review");
   const rv = r.review;
-  const what = body.kind === "subscription" ? `suscribir ${money(body.amount)}` : body.redeem_all ? "rescatar todo" : `rescatar ${numf(body.quantity, 4)} cuotapartes`;
+  const repo = body.kind === "repo";
+  const what = repo ? `colocar ${money(body.amount)} en caución a ${rv.term_days} ${rv.term_days === 1 ? "día" : "días"}`
+    : body.kind === "subscription" ? `suscribir ${money(body.amount)}` : body.redeem_all ? "rescatar todo" : `rescatar ${numf(body.quantity, 4)} cuotapartes`;
+  const where = repo ? "" : ` en ${body.symbol}`;
   box.className = "review" + (r.valid ? "" : " bad");
-  const title = el("h3", "", r.valid ? `Vas a ${what} en ${body.symbol}` : `IOL no acepta ${what} en ${body.symbol}`);
+  const title = el("h3", "", r.valid ? `Vas a ${what}${where}` : `IOL no acepta ${what}${where}`);
   const sub = el("p", "sub", r.valid
     ? "Todavía no se envió nada. Al confirmar, la orden sale hacia tu cuenta real de IOL."
     : "No se envió nada. Este es el motivo que informó IOL:");
   const facts = el("dl", "facts");
   const fact = (k, v) => { const d = el("div"); d.append(el("dt", "", k), el("dd", "", v)); facts.append(d); };
+  if (repo) {
+    fact("Tasa mínima que aceptás", numf(rv.rate) + " % anual");
+    if (rv.due_date) fact("Vence", new Date(rv.due_date + "T12:00:00").toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" }));
+    fact("Interés estimado", "+" + money(rv.interest_estimate));
+    fact("Comisiones e IVA", money(rv.fees_total));
+    fact("Ganancia neta estimada", (rv.net_estimate > 0 ? "+" : "") + money(rv.net_estimate));
+    if (rv.available_ars !== null) fact("Disponible hoy en IOL", money(rv.available_ars));
+    if (rv.remaining_today_ars !== null) fact("Te queda para hoy", money(rv.remaining_today_ars));
+  } else {
   fact("Fondo", rv.fund_name || body.symbol);
   if (rv.minimum_investment !== null && rv.minimum_investment !== undefined) fact("Mínimo de inversión", money(rv.minimum_investment));
   if (rv.settlement_term) fact("Plazo de liquidación", String(rv.settlement_term));
   if (body.kind === "subscription" && rv.remaining_today_ars !== null) fact("Te queda para hoy", money(rv.remaining_today_ars));
+  }
   const list = el("ul");
   (rv.messages || []).forEach((m) => list.append(el("li", "", m)));
+  if (repo) {
+    list.append(el("li", "", "La plata queda inmovilizada hasta el vencimiento: una caución tomada no se puede cancelar antes."));
+    list.append(el("li", "", "Es una orden a tasa límite: si el mercado no paga tu tasa, queda pendiente y la podés anular."));
+    if (rv.net_estimate <= 0) list.append(el("li", "", "Con este monto y plazo, las comisiones superan al interés."));
+    if (rv.market_bid_rate !== null || rv.market_ask_rate !== null) list.append(el("li", "", `Tasas en el mercado ahora: colocadora ${rv.market_bid_rate === null ? "—" : numf(rv.market_bid_rate) + " %"} · tomadora ${rv.market_ask_rate === null ? "—" : numf(rv.market_ask_rate) + " %"}.`));
+  }
   const actions = el("div", "actions");
   if (r.valid) {
     pendingOrder = r.order_id;
+    const fn = fnFor(body.kind);
     const go = el("button", "btn btn-primary", "Confirmar y enviar a IOL");
     go.type = "button";
     go.addEventListener("click", async () => {
@@ -659,7 +736,7 @@ function showReview(body, r) {
       pendingOrder = null;                       // evita el doble envío por doble toque
       go.disabled = true;
       go.replaceChildren(el("span", "spinner"), el("span", "", "Enviando…"));
-      const res = await callFci({ action: "confirm", order_id: id });
+      const res = await callFn(fn, { action: "confirm", order_id: id });
       closeReview();
       await sync(true);
       if (res.ok) notice(`IOL recibió la orden${res.transaction_id ? " (operación " + res.transaction_id + ")" : ""}. ${res.message || ""}`, "ok");
