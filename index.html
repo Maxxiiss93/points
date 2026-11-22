@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="es-AR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#171721">
+<title>Panel de inversiones</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@360..600&display=swap" rel="stylesheet">
+<style>
+  /* Dirección visual: marco carbón + cuerpo lavanda muy claro, azul solo para acciones,
+     números grandes en peso medio (no negrita), tablas sobre el lienzo con líneas finas. */
+  :root {
+    --canvas: #171721;        /* marco oscuro */
+    --panel: #1e1e2a;         /* superficies sobre el marco */
+    --dark-edge: rgba(175,178,206,.36);
+    --pearl: #ededf3;         /* texto principal sobre oscuro */
+    --silver: #c3c3cc;        /* texto de apoyo sobre oscuro */
+    --light: #f7f6fd;         /* cuerpo claro */
+    --white: #ffffff;
+    --ink: #272735;           /* texto principal sobre claro */
+    --subdued: #535461;       /* texto de apoyo sobre claro */
+    --edge: #e3e4e8;          /* líneas finas sobre claro */
+    --blue: #5266eb;          /* SOLO acciones y selección */
+    --blue-hover: #4354c8;
+    --blue-active: #3442a6;
+    --wash: rgba(156,180,232,.2);       /* acción secundaria sobre oscuro */
+    --wash-hover: rgba(156,180,232,.278);
+    --gain: #167e6c;          /* SOLO resultados positivos */
+    --gain-dark: #6fd3bd;
+    --loss: #b3261e;          /* SOLO resultados negativos y errores */
+    --loss-dark: #ff9b93;
+    --font: "Inter", system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+    --w-text: 400; --w-strong: 480;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--light); color: var(--ink); font: var(--w-text) 16px/1.5 var(--font); }
+  [hidden] { display: none !important; }
+  .wrap { max-width: 1072px; margin: 0 auto; padding: 0 24px; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* Botones: píldoras compactas de 40px (44px de área táctil en móvil) */
+  button { font: var(--w-strong) 16px/1 var(--font); cursor: pointer; border: 0; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 40px; padding: 0 20px; border-radius: 32px; white-space: nowrap; transition: background-color .15s ease-out; }
+  .btn-primary { background: var(--blue); color: var(--white); }
+  .btn-primary:hover { background: var(--blue-hover); }
+  .btn-primary:active { background: var(--blue-active); }
+  .btn-wash { background: var(--wash); color: var(--pearl); border-radius: 40px; }
+  .btn-wash:hover { background: var(--wash-hover); }
+  .btn-quiet { background: transparent; color: var(--subdued); border: 1px solid var(--edge); border-radius: 40px; height: 36px; padding: 0 14px; font-size: 14px; }
+  .btn-quiet:hover { color: var(--ink); border-color: var(--subdued); }
+  .btn:disabled { opacity: .6; cursor: progress; }
+  .btn:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .on-dark .btn:focus-visible, .on-dark input:focus-visible { outline-color: var(--pearl); }
+  .spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ---------- Ingreso: escena oscura con un panel sobrio ---------- */
+  .auth { min-height: 100vh; min-height: 100dvh; background: var(--canvas); color: var(--pearl); display: grid; place-items: center; padding: 24px; }
+  .auth-panel { width: 100%; max-width: 400px; background: var(--panel); border: 1px solid var(--dark-edge); border-radius: 12px; padding: 32px; }
+  .auth h1 { font: var(--w-strong) 28px/1.2 var(--font); letter-spacing: .015em; margin: 0 0 8px; text-wrap: balance; }
+  .auth p { color: var(--silver); margin: 0 0 24px; }
+  .auth label { display: block; font-size: 14px; color: var(--silver); margin-bottom: 6px; }
+  .auth input { width: 100%; height: 48px; padding: 0 14px; margin-bottom: 16px; border-radius: 8px; border: 1px solid var(--dark-edge); background: var(--canvas); color: var(--pearl); font: var(--w-text) 16px var(--font); }
+  .auth .btn { width: 100%; height: 44px; margin-top: 8px; }
+  .auth .err { color: var(--loss-dark); font-size: 14px; min-height: 21px; margin: 12px 0 0; }
+  .auth .uid { font-size: 13px; color: var(--silver); overflow-wrap: anywhere; }
+
+  /* ---------- Marco oscuro: barra + cifras ---------- */
+  .frame { background: var(--canvas); color: var(--pearl); padding-bottom: 40px; }
+  .bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 20px 0; }
+  .brand { font: var(--w-strong) 18px/1.2 var(--font); letter-spacing: .02em; }
+  .bar-actions { display: flex; gap: 8px; align-items: center; }
+  .sync-state { display: flex; align-items: center; gap: 8px; color: var(--silver); font-size: 14px; margin-top: 4px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--silver); flex: none; }
+  .dot.ok { background: var(--gain-dark); } .dot.bad { background: var(--loss-dark); }
+
+  .total-label { color: var(--silver); font-size: 16px; margin: 28px 0 4px; }
+  .total { font: var(--w-strong) clamp(40px, 9vw, 65px)/1.1 var(--font); letter-spacing: -.01em; margin: 0; overflow-wrap: anywhere; }
+  .strip { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 32px; }
+  .cell { padding: 0 24px; border-left: 1px solid var(--dark-edge); min-width: 0; }
+  .cell:first-child { padding-left: 0; border-left: 0; }
+  .cell .v { font: var(--w-strong) 24px/1.2 var(--font); letter-spacing: .01em; overflow-wrap: anywhere; }
+  .cell .l { color: var(--silver); font-size: 14px; margin-top: 8px; }
+
+  .alloc { margin-top: 32px; }
+  .alloc-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--panel); gap: 2px; }
+  .alloc-bar span { display: block; min-width: 2px; }
+  .seg-a { background: #9cb4e8; } .seg-b { background: #ededf3; } .seg-c { background: #6b6f86; }
+  .alloc-legend { display: flex; flex-wrap: wrap; gap: 8px 24px; margin: 12px 0 0; padding: 0; list-style: none; color: var(--silver); font-size: 14px; }
+  .alloc-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 8px; }
+
+  /* ---------- Cuerpo claro: capítulos bajo una línea fina ---------- */
+  main { padding: 8px 0 72px; }
+  .notice { margin: 24px 0 0; padding: 14px 16px; border-radius: 12px; background: var(--white); border: 1px solid var(--edge); border-left: 3px solid var(--loss); color: var(--ink); }
+  .notice strong { font-weight: var(--w-strong); }
+  .chapter { margin-top: 48px; }
+  .chapter-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; border-top: 1px solid var(--edge); padding-top: 20px; margin-bottom: 8px; }
+  .chapter h2 { font: var(--w-strong) 24px/1.2 var(--font); letter-spacing: .02em; margin: 0; }
+  .chapter .hint { color: var(--subdued); font-size: 14px; margin: 0; }
+  .chapter > p.lead { color: var(--subdued); max-width: 62ch; margin: 4px 0 12px; }
+
+  .scroller { position: relative; overflow-x: auto; margin: 0 -24px; padding: 0 24px; }
+  table { width: 100%; border-collapse: collapse; min-width: 560px; }
+  th { text-align: left; font: var(--w-text) 13px/1.3 var(--font); color: var(--subdued); padding: 12px 12px 10px 0; white-space: nowrap; }
+  td { padding: 14px 12px 14px 0; border-top: 1px solid var(--edge); vertical-align: middle; white-space: nowrap; }
+  th.r, td.r { text-align: right; padding-right: 0; padding-left: 12px; }
+  tbody tr:hover { background: rgba(39,39,53,.025); }
+  .asset { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--white); border: 1px solid var(--edge); display: grid; place-items: center; font: var(--w-strong) 11px/1 var(--font); letter-spacing: .02em; color: var(--ink); flex: none; }
+  .asset .name { font-weight: var(--w-strong); }
+  .asset .sub { color: var(--subdued); font-size: 13px; white-space: normal; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; }
+  .strong { font-weight: var(--w-strong); }
+  .sub2 { display: block; color: var(--subdued); font-size: 13px; }
+  .gain { color: var(--gain); } .loss { color: var(--loss); }
+  .tag { display: inline-block; padding: 2px 10px; border-radius: 20px; border: 1px solid var(--edge); background: var(--white); font-size: 13px; color: var(--subdued); }
+  .only-mobile { display: none; }
+  .log-msg { white-space: normal; color: var(--subdued); font-size: 14px; min-width: 260px; }
+
+  .empty { border-top: 1px solid var(--edge); padding: 28px 0; color: var(--subdued); display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .empty b { display: block; color: var(--ink); font-weight: var(--w-strong); }
+
+  /* Formulario de carga manual */
+  .form { display: grid; grid-template-columns: 2fr 1fr 1.4fr 1fr auto; gap: 12px; align-items: end; margin-top: 20px; padding: 20px; background: var(--white); border: 1px solid var(--edge); border-radius: 12px; }
+  .form label { display: block; font-size: 13px; color: var(--subdued); margin-bottom: 6px; }
+  .form input, .form select { width: 100%; height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--edge); background: var(--white); color: var(--ink); font: var(--w-text) 16px var(--font); }
+  .form .btn { height: 44px; }
+  .foot { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--edge); color: var(--subdued); font-size: 14px; }
+
+  @media (max-width: 760px) {
+    .wrap { padding: 0 16px; }
+    .scroller { margin: 0 -16px; padding: 0 16px; }
+    .strip { grid-template-columns: 1fr 1fr; row-gap: 24px; }
+    .cell { padding: 0 16px; }
+    .cell:nth-child(odd) { padding-left: 0; border-left: 0; }
+    .cell .v { font-size: 20px; }
+    .btn { height: 44px; }
+    .btn-quiet { height: 40px; }
+    .form { grid-template-columns: 1fr 1fr; }
+    .form .f-name, .form .btn { grid-column: 1 / -1; }
+    .chapter { margin-top: 40px; }
+    .chapter h2 { font-size: 22px; }
+    /* En el celular cada tabla muestra solo lo esencial, sin scroll horizontal */
+    table { min-width: 0; }
+    td { white-space: normal; }
+    td.num { white-space: nowrap; }
+    #positions-table th:nth-child(2), #positions-table td:nth-child(2),
+    #positions-table th:nth-child(3), #positions-table td:nth-child(3),
+    #positions-table th:nth-child(6), #positions-table td:nth-child(6),
+    #balances-table th:nth-child(4), #balances-table td:nth-child(4),
+    #manual-table th:nth-child(3), #manual-table td:nth-child(3),
+    #manual-table th:nth-child(4), #manual-table td:nth-child(4),
+    #manual-table th:nth-child(5), #manual-table td:nth-child(5),
+    #log-table th:nth-child(2), #log-table td:nth-child(2) { display: none; }
+    #positions-table td:nth-child(4) { font-size: 15px; }
+    #manual-table td:last-child { width: 1%; padding-left: 8px; }
+    #manual-table .btn-quiet { display: flex; width: 100%; margin: 4px 0 !important; padding: 0 12px; }
+    .asset { gap: 10px; }
+    .asset .sub { max-width: 16ch; }
+    .log-msg { min-width: 0; }
+    .only-mobile { display: inline; font-weight: var(--w-strong); }
+    #log-table td:first-child { white-space: nowrap; vertical-align: top; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation-duration: 2s; }
+    .btn { transition: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Ingreso -->
+<section id="view-login" class="auth on-dark" hidden>
+  <div class="auth-panel">
+    <h1>Panel de inversiones</h1>
+    <p>Ingresá con tu usuario del panel. No es la clave de IOL.</p>
+    <form id="login-form" novalidate>
+      <label for="email">Email</label>
+      <input id="email" type="email" autocomplete="username" inputmode="email" required>
+      <label for="password">Contraseña</label>
+      <input id="password" type="password" autocomplete="current-password" required>
+      <button type="submit" class="btn btn-primary" id="login-btn">Ingresar</button>
+      <p class="err" id="login-error" role="alert"></p>
+    </form>
+  </div>
+</section>
+
+<!-- Sin autorización -->
+<section id="view-denied" class="auth on-dark" hidden>
+  <div class="auth-panel">
+    <h1>Tu usuario todavía no tiene acceso</h1>
+    <p>La cuenta existe, pero falta habilitarla para ver el panel. Pasá este identificador para que la autoricen:</p>
+    <p class="uid" id="denied-uid"></p>
+    <button class="btn btn-wash" id="denied-logout">Salir</button>
+  </div>
+</section>
+
+<!-- Panel -->
+<div id="view-app" hidden>
+  <header class="frame on-dark">
+    <div class="wrap">
+      <div class="bar">
+        <div>
+          <div class="brand">Inversiones</div>
+          <div class="sync-state"><span class="dot" id="sync-dot"></span><span id="last-sync">Sin sincronizar todavía</span></div>
+        </div>
+        <div class="bar-actions">
+          <button class="btn btn-primary" id="sync-btn"><span id="sync-label">Sincronizar IOL</span></button>
+          <button class="btn btn-wash" id="logout-btn">Salir</button>
+        </div>
+      </div>
+
+      <p class="total-label">Total en pesos</p>
+      <p class="total num" id="kpi-total">—</p>
+
+      <div class="strip">
+        <div class="cell"><div class="v num" id="kpi-positions">—</div><div class="l">Invertido en IOL</div></div>
+        <div class="cell"><div class="v num" id="kpi-cash">—</div><div class="l">Pesos sin invertir en IOL</div></div>
+        <div class="cell"><div class="v num" id="kpi-manual">—</div><div class="l">En otras apps</div></div>
+        <div class="cell"><div class="v num" id="kpi-usd">—</div><div class="l">Dólares en IOL (no suman al total)</div></div>
+      </div>
+
+      <div class="alloc" id="alloc" hidden>
+        <div class="alloc-bar" id="alloc-bar" role="img" aria-label="Reparto del total en pesos"></div>
+        <ul class="alloc-legend" id="alloc-legend"></ul>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="notice" id="notice" role="alert" hidden></div>
+
+    <section class="chapter" aria-labelledby="h-pos">
+      <div class="chapter-head">
+        <h2 id="h-pos">Tenencias en IOL</h2>
+        <p class="hint" id="pos-count"></p>
+      </div>
+      <div class="scroller" id="positions-table">
+        <table>
+          <thead><tr>
+            <th scope="col">Activo</th><th scope="col" class="r">Cantidad</th><th scope="col" class="r">Precio</th>
+            <th scope="col" class="r">Valor</th><th scope="col" class="r">Resultado</th><th scope="col" class="r">Peso</th>
+          </tr></thead>
+          <tbody id="positions-body"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="positions-empty" hidden>
+        <div><b>Todavía no hay tenencias cargadas</b>Traé tus datos de IOL para verlos acá. Es solo lectura: no se envía ninguna orden.</div>
+        <button class="btn btn-primary" id="sync-btn-2">Sincronizar IOL</button>
+      </div>
+    </section>
+
+    <section class="chapter" aria-labelledby="h-bal">
+      <div class="chapter-head"><h2 id="h-bal">Efectivo en IOL</h2></div>
+      <div class="scroller" id="balances-table">
+        <table>
+          <thead><tr><th scope="col">Cuenta</th><th scope="col" class="r">Total</th><th scope="col" class="r">Disponible hoy</th><th scope="col" class="r">Para retirar</th></tr></thead>
+          <tbody id="balances-body"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="balances-empty" hidden><div><b>Sin saldos todavía</b>Aparecen después de la primera sincronización.</div></div>
+    </section>
+
+    <section class="chapter" aria-labelledby="h-man">
+      <div class="chapter-head"><h2 id="h-man">Otras apps</h2></div>
+      <p class="lead">Mercado Pago, OKX y cualquier app sin conexión automática. Actualizá el monto cada vez que muevas plata.</p>
+      <div class="scroller" id="manual-table">
+        <table>
+          <thead><tr><th scope="col">App</th><th scope="col" class="r">Monto</th><th scope="col" class="r">Tasa anual</th><th scope="col" class="r">Rinde por mes</th><th scope="col" class="r">Actualizado</th><th scope="col" class="r"><span class="sr">Acciones</span></th></tr></thead>
+          <tbody id="manual-body"></tbody>
+        </table>
+      </div>
+      <form id="manual-form" class="form">
+        <div class="f-name"><label for="m-name">App</label><input id="m-name" required placeholder="Ej.: OKX" autocomplete="off"></div>
+        <div><label for="m-currency">Moneda</label>
+          <select id="m-currency"><option>ARS</option><option>USD</option><option>USDT</option></select></div>
+        <div><label for="m-amount">Monto</label><input id="m-amount" type="number" inputmode="decimal" step="0.01" min="0" required></div>
+        <div><label for="m-tna">Tasa anual %</label><input id="m-tna" type="number" inputmode="decimal" step="0.01" min="0" placeholder="Opcional"></div>
+        <button type="submit" class="btn btn-primary" id="manual-btn">Guardar monto</button>
+      </form>
+      <p class="hint" style="margin-top:12px;color:var(--subdued);font-size:14px">Si la app ya está en la lista con esa moneda, se actualiza su monto. USD y USDT se muestran pero no se suman al total en pesos.</p>
+    </section>
+
+    <section class="chapter" aria-labelledby="h-log">
+      <div class="chapter-head"><h2 id="h-log">Sincronizaciones</h2><p class="hint">Últimas 5</p></div>
+      <div class="scroller" id="log-table">
+        <table>
+          <thead><tr><th scope="col">Fecha</th><th scope="col">Estado</th><th scope="col">Detalle</th></tr></thead>
+          <tbody id="log-body"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="log-empty" hidden><div><b>Sin registros</b>Cada sincronización queda anotada acá con su resultado.</div></div>
+    </section>
+
+    <p class="foot">Etapa 1, solo lectura: este panel consulta tus cuentas y no envía órdenes de compra ni de venta.</p>
+  </main>
+</div>
+
+<style>.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }</style>
+
+<script type="module">
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+
+const SUPABASE_URL = "https://griabljjsudauobkzqzs.supabase.co";
+const SUPABASE_KEY = "sb_publishable_1XWa8TSmSb6EWyE4GjKL2Q_5OehP2N0"; // clave pública: los datos los protege RLS
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const $ = (id) => document.getElementById(id);
+const views = ["view-login", "view-denied", "view-app"];
+const show = (id) => views.forEach((v) => ($(v).hidden = v !== id));
+
+const money = (n, cur = "ARS") =>
+  n === null || n === undefined ? "—"
+  : new Intl.NumberFormat("es-AR", { style: "currency", currency: cur === "USDT" ? "USD" : cur, maximumFractionDigits: 2 }).format(n);
+const numf = (n, d = 2) => n === null || n === undefined ? "—"
+  : new Intl.NumberFormat("es-AR", { maximumFractionDigits: d }).format(n);
+const pct = (n) => n === null || n === undefined ? "—" : numf(n) + " %";
+const signed = (n, cur) => (n > 0 ? "+" : "") + money(n, cur);
+const when = (iso) => iso ? new Date(iso).toLocaleString("es-AR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
+
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+const td = (text, cls) => el("td", cls, text);
+const fill = (id, rows) => $(id).replaceChildren(...rows);
+
+function notice(text) {
+  const n = $("notice");
+  n.replaceChildren();
+  if (text) { n.append(el("strong", "", "No salió. "), document.createTextNode(text)); }
+  n.hidden = !text;
+  if (text) n.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function renderAlloc(parts) {
+  const total = parts.reduce((a, p) => a + p.value, 0);
+  $("alloc").hidden = !(total > 0);
+  if (!(total > 0)) return;
+  $("alloc-bar").replaceChildren(...parts.filter((p) => p.value > 0).map((p) => {
+    const s = el("span", p.cls);
+    s.style.flex = `${p.value} 1 0`;
+    return s;
+  }));
+  $("alloc-legend").replaceChildren(...parts.map((p) => {
+    const li = el("li");
+    li.append(el("i", p.cls), document.createTextNode(`${p.label} ${numf((p.value / total) * 100, 1)} %`));
+    return li;
+  }));
+}
+
+async function load() {
+  const [pos, bal, man, log] = await Promise.all([
+    sb.from("inv_positions").select("*").order("market_value", { ascending: false }),
+    sb.from("inv_balances").select("*").order("country").order("currency"),
+    sb.from("inv_manual").select("*").order("amount", { ascending: false }),
+    sb.from("inv_sync_log").select("*").order("started_at", { ascending: false }).limit(5),
+  ]);
+  const failed = [pos, bal, man, log].find((r) => r.error);
+  if (failed) { notice("No pude leer los datos: " + failed.error.message); return; }
+  const positions = pos.data, balances = bal.data, manual = man.data, logs = log.data;
+
+  // Tenencias
+  fill("positions-body", positions.map((p) => {
+    const cur = p.valuation_currency || "ARS";
+    const tr = el("tr");
+    const first = el("td");
+    const asset = el("div", "asset");
+    const txt = el("div");
+    txt.append(el("div", "name", p.symbol), el("div", "sub", [p.name, p.type || p.asset_class].filter(Boolean).join(" · ") || (p.country === "US" ? "EE.UU." : "Argentina")));
+    asset.append(el("span", "avatar", String(p.symbol).slice(0, 4)), txt);
+    first.append(asset);
+    const res = el("td", "r num " + (p.pl > 0 ? "gain" : p.pl < 0 ? "loss" : ""));
+    if (p.pl === null) res.textContent = "—";
+    else res.append(document.createTextNode(signed(p.pl, cur)), el("span", "sub2", (p.pl_percent > 0 ? "+" : "") + pct(p.pl_percent)));
+    tr.append(first, td(numf(p.quantity, 4), "r num"), td(money(p.current_price, cur), "r num"),
+      td(money(p.market_value, cur), "r num strong"), res, td(pct(p.weight_percent), "r num"));
+    return tr;
+  }));
+  $("positions-table").hidden = positions.length === 0;
+  $("positions-empty").hidden = positions.length > 0;
+  $("pos-count").textContent = positions.length ? `${positions.length} ${positions.length === 1 ? "activo" : "activos"}` : "";
+
+  // Efectivo IOL
+  fill("balances-body", balances.map((b) => {
+    const tr = el("tr");
+    const first = el("td");
+    const asset = el("div", "asset");
+    const txt = el("div");
+    txt.append(el("div", "name", b.currency === "ARS" ? "Pesos" : "Dólares"), el("div", "sub", b.country === "AR" ? "Cuenta Argentina" : "Cuenta EE.UU."));
+    asset.append(el("span", "avatar", b.currency), txt);
+    first.append(asset);
+    tr.append(first, td(money(b.total, b.currency), "r num strong"), td(money(b.available, b.currency), "r num"), td(money(b.available_for_withdrawal, b.currency), "r num"));
+    return tr;
+  }));
+  $("balances-table").hidden = balances.length === 0;
+  $("balances-empty").hidden = balances.length > 0;
+
+  // Otras apps
+  fill("manual-body", manual.map((m) => {
+    const tr = el("tr");
+    const first = el("td");
+    const asset = el("div", "asset");
+    const txt = el("div");
+    txt.append(el("div", "name", m.name), el("div", "sub", m.currency));
+    asset.append(el("span", "avatar", m.name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase()), txt);
+    first.append(asset);
+    const monthly = m.tna ? (m.amount * m.tna) / 100 / 12 : null;
+    const actions = el("td", "r");
+    const edit = el("button", "btn btn-quiet", "Editar");
+    edit.type = "button";
+    edit.setAttribute("aria-label", "Editar " + m.name);
+    edit.addEventListener("click", () => {
+      $("m-name").value = m.name; $("m-currency").value = m.currency;
+      $("m-amount").value = m.amount; $("m-tna").value = m.tna ?? "";
+      $("m-amount").focus(); $("m-amount").select();
+    });
+    const del = el("button", "btn btn-quiet", "Quitar");
+    del.type = "button";
+    del.style.marginLeft = "8px";
+    del.setAttribute("aria-label", "Quitar " + m.name);
+    del.addEventListener("click", async () => {
+      if (del.dataset.armed !== "1") { del.dataset.armed = "1"; del.textContent = "¿Seguro?"; setTimeout(() => { del.dataset.armed = ""; del.textContent = "Quitar"; }, 4000); return; }
+      del.disabled = true;
+      const { error } = await sb.from("inv_manual").delete().eq("id", m.id);
+      if (error) { notice("No pude quitar " + m.name + ": " + error.message); del.disabled = false; return; }
+      load();
+    });
+    actions.append(edit, del);
+    tr.append(first, td(money(m.amount, m.currency), "r num strong"), td(m.tna === null ? "—" : pct(m.tna), "r num"),
+      td(monthly === null ? "—" : "+" + money(monthly, m.currency), "r num " + (monthly ? "gain" : "")), td(when(m.updated_at), "r"), actions);
+    return tr;
+  }));
+
+  // Registro
+  fill("log-body", logs.map((l) => {
+    const tr = el("tr");
+    const state = el("td");
+    state.append(el("span", "tag " + (l.ok === false ? "loss" : l.ok ? "gain" : ""), l.ok === true ? "Correcta" : l.ok === false ? "Con error" : "En curso"));
+    const detail = td("", "log-msg");
+    if (l.ok === false) detail.append(el("span", "loss only-mobile", "Con error. "));
+    detail.append(document.createTextNode(l.message || "—"));
+    tr.append(td(when(l.started_at)), state, detail);
+    return tr;
+  }));
+  $("log-table").hidden = logs.length === 0;
+  $("log-empty").hidden = logs.length > 0;
+  const last = logs[0];
+  const lastOk = logs.find((l) => l.ok);
+  $("sync-dot").className = "dot " + (!last ? "" : last.ok ? "ok" : last.ok === false ? "bad" : "");
+  $("last-sync").textContent = !last ? "Sin sincronizar todavía"
+    : last.ok === false ? "La última sincronización falló" + (lastOk ? " · datos del " + when(lastOk.finished_at || lastOk.started_at) : "")
+    : "Actualizado el " + when((lastOk || last).finished_at || (lastOk || last).started_at);
+
+  // Totales en pesos
+  const sum = (arr) => arr.reduce((a, b) => a + (Number(b) || 0), 0);
+  const positionsArs = sum(positions.filter((p) => p.country === "AR" && (p.valuation_currency || "ARS") === "ARS").map((p) => p.market_value));
+  const cashArs = sum(balances.filter((b) => b.currency === "ARS").map((b) => b.total));
+  const usd = sum(balances.filter((b) => b.currency === "USD").map((b) => b.total));
+  const manualArs = sum(manual.filter((m) => m.currency === "ARS").map((m) => m.amount));
+  $("kpi-positions").textContent = money(positionsArs);
+  $("kpi-cash").textContent = money(cashArs);
+  $("kpi-manual").textContent = money(manualArs);
+  $("kpi-usd").textContent = money(usd, "USD");
+  $("kpi-total").textContent = money(positionsArs + cashArs + manualArs);
+  renderAlloc([
+    { label: "Invertido en IOL", value: positionsArs, cls: "seg-a" },
+    { label: "Pesos en IOL", value: cashArs, cls: "seg-b" },
+    { label: "Otras apps", value: manualArs, cls: "seg-c" },
+  ]);
+}
+
+async function route() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { show("view-login"); $("email").focus(); return; }
+  const { data, error } = await sb.from("inv_admins").select("user_id").eq("user_id", session.user.id).maybeSingle();
+  if (error || !data) { $("denied-uid").textContent = session.user.id; show("view-denied"); return; }
+  show("view-app");
+  load();
+}
+
+$("login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const email = $("email").value.trim(), password = $("password").value;
+  if (!email || !password) { $("login-error").textContent = "Completá el email y la contraseña."; return; }
+  $("login-error").textContent = "";
+  $("login-btn").disabled = true;
+  $("login-btn").textContent = "Ingresando…";
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  $("login-btn").disabled = false;
+  $("login-btn").textContent = "Ingresar";
+  if (error) { $("login-error").textContent = "El email o la contraseña no coinciden. Probá de nuevo."; return; }
+  $("password").value = "";
+  route();
+});
+
+const logout = async () => { await sb.auth.signOut(); show("view-login"); };
+$("logout-btn").addEventListener("click", logout);
+$("denied-logout").addEventListener("click", logout);
+
+async function sync() {
+  const btns = [$("sync-btn"), $("sync-btn-2")];
+  btns.forEach((b) => (b.disabled = true));
+  $("sync-btn").replaceChildren(el("span", "spinner"), el("span", "", "Sincronizando…"));
+  notice("");
+  const { data, error } = await sb.functions.invoke("iol-sync", { method: "POST", body: {} });
+  let msg = "";
+  if (error) {
+    let detail = error.message;
+    try { const body = await error.context.json(); detail = body?.error || body?.message || detail; } catch (_) { /* sin cuerpo */ }
+    msg = detail;
+  } else if (data && data.ok === false) {
+    msg = data.error;
+  }
+  $("sync-btn").replaceChildren(el("span", "", "Sincronizar IOL"));
+  btns.forEach((b) => (b.disabled = false));
+  await load();
+  notice(msg);
+}
+$("sync-btn").addEventListener("click", sync);
+$("sync-btn-2").addEventListener("click", sync);
+
+$("manual-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = $("m-name").value.trim();
+  const currency = $("m-currency").value;
+  const amount = Number($("m-amount").value);
+  const tna = $("m-tna").value === "" ? null : Number($("m-tna").value);
+  if (!name || !Number.isFinite(amount)) return;
+  $("manual-btn").disabled = true;
+  const now = new Date().toISOString();
+  const { data: existing } = await sb.from("inv_manual").select("id").eq("name", name).eq("currency", currency).maybeSingle();
+  const res = existing
+    ? await sb.from("inv_manual").update({ amount, tna, updated_at: now }).eq("id", existing.id)
+    : await sb.from("inv_manual").insert({ name, currency, amount, tna, updated_at: now });
+  $("manual-btn").disabled = false;
+  if (res.error) { notice("No pude guardar el monto: " + res.error.message); return; }
+  notice("");
+  e.target.reset();
+  load();
+});
+
+sb.auth.onAuthStateChange((event) => { if (event === "SIGNED_OUT") show("view-login"); });
+route();
+</script>
+</body>
+</html>
