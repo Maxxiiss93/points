@@ -144,6 +144,12 @@
   .review .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .review.bad { border-left: 3px solid var(--loss); }
   .paused { margin-top: 12px; padding: 14px 16px; border-radius: 12px; background: var(--white); border: 1px solid var(--edge); border-left: 3px solid var(--subdued); }
+  /* Señales: barra de 0 a 20 con marca en 10 (señal promedio) */
+  .meter { position: relative; width: 120px; height: 6px; border-radius: 3px; background: var(--edge); display: inline-block; vertical-align: middle; margin-left: 10px; }
+  .meter i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--ink); }
+  .meter::after { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--subdued); }
+  .sig-form { grid-template-columns: 1.4fr 1fr auto; max-width: 560px; }
+  #signals-table th:nth-child(4), #signals-table td:nth-child(4) { padding-left: 32px; }
   .foot { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--edge); color: var(--subdued); font-size: 14px; }
 
   @media (max-width: 760px) {
@@ -161,6 +167,11 @@
     .review { padding: 20px 16px; }
     .review .actions .btn { flex: 1 1 100%; }
     #orders-table th:nth-child(3), #orders-table td:nth-child(3) { display: none; }
+    #signals-table th:nth-child(2), #signals-table td:nth-child(2),
+    #signals-table th:nth-child(3), #signals-table td:nth-child(3),
+    #signals-table th:nth-child(6), #signals-table td:nth-child(6) { display: none; }
+    .meter { display: none; }
+    .sig-form { grid-template-columns: 1fr 1fr; }
     .chapter { margin-top: 40px; }
     .chapter h2 { font-size: 22px; }
     /* En el celular cada tabla muestra solo lo esencial, sin scroll horizontal */
@@ -281,6 +292,29 @@
           <tbody id="orders-body"></tbody>
         </table>
       </div>
+    </section>
+
+    <section class="chapter" aria-labelledby="h-sig">
+      <div class="chapter-head">
+        <h2 id="h-sig">Señales de tendencia</h2>
+        <button type="button" class="btn btn-quiet" id="sig-btn">Actualizar señales</button>
+      </div>
+      <p class="lead" id="sig-lead">Regla mecánica de seguimiento de tendencia, con el tamaño ajustado por volatilidad.</p>
+      <div class="scroller" id="signals-table">
+        <table>
+          <thead><tr>
+            <th scope="col">Activo</th><th scope="col" class="r">Precio</th><th scope="col" class="r">Volatilidad anual</th>
+            <th scope="col">Señal (0 a 20)</th><th scope="col" class="r">Tamaño según la regla</th><th scope="col" class="r">Operaciones por año</th><th scope="col" class="r"><span class="sr">Acciones</span></th>
+          </tr></thead>
+          <tbody id="signals-body"></tbody>
+        </table>
+      </div>
+      <form id="sig-form" class="form sig-form">
+        <div><label for="sig-symbol">Símbolo</label><input id="sig-symbol" required placeholder="Ej.: AAPL" autocomplete="off" autocapitalize="characters"></div>
+        <div><label for="sig-market">Mercado</label><select id="sig-market"><option value="BCBA">BCBA (pesos)</option><option value="NASDAQ">NASDAQ</option><option value="NYSE">NYSE</option></select></div>
+        <button type="submit" class="btn btn-primary">Seguir activo</button>
+      </form>
+      <p class="hint" style="margin-top:12px;color:var(--subdued);font-size:14px">Señal: 0 es sin tendencia alcista, 10 es una tendencia promedio y 20 es el máximo. El tamaño es lo que indica la regla con tus parámetros, no una recomendación; "operaciones por año" es el máximo de idas y vueltas que los costos permiten sin comerse el resultado esperado.</p>
     </section>
 
     <section class="chapter" aria-labelledby="h-pos">
@@ -406,7 +440,7 @@ function renderAlloc(parts) {
 }
 
 async function load() {
-  const [pos, bal, man, log, set, fun, ord] = await Promise.all([
+  const [pos, bal, man, log, set, fun, ord, wat, sig] = await Promise.all([
     sb.from("inv_positions").select("*").order("market_value", { ascending: false }),
     sb.from("inv_balances").select("*").order("country").order("currency"),
     sb.from("inv_manual").select("*").order("amount", { ascending: false }),
@@ -414,12 +448,15 @@ async function load() {
     sb.from("inv_settings").select("*").maybeSingle(),
     sb.from("inv_funds").select("*").eq("enabled", true).order("symbol"),
     sb.from("inv_orders").select("*").order("created_at", { ascending: false }).limit(8),
+    sb.from("inv_watchlist").select("*").eq("enabled", true).order("symbol"),
+    sb.from("inv_signals").select("*"),
   ]);
-  const failed = [pos, bal, man, log, set, fun, ord].find((r) => r.error);
+  const failed = [pos, bal, man, log, set, fun, ord, wat, sig].find((r) => r.error);
   if (failed) { notice("No pude leer los datos: " + failed.error.message); return; }
   const positions = pos.data, balances = bal.data, manual = man.data, logs = log.data;
 
   renderTrading(set.data, fun.data || [], ord.data || []);
+  renderSignals(set.data, wat.data || [], sig.data || []);
 
   // Tenencias
   fill("positions-body", positions.map((p) => {
@@ -536,6 +573,73 @@ async function load() {
     { label: "Otras apps", value: manualArs, cls: "seg-c" },
   ]);
 }
+
+// ---------- Señales de tendencia ----------
+const signalWord = (f) => f === null || f === undefined ? "Sin calcular" : f <= 0 ? "Sin tendencia" : f < 5 ? "Débil" : f < 15 ? "Media" : "Fuerte";
+
+function renderSignals(s, watch, signals) {
+  $("sig-lead").textContent = s
+    ? `Regla mecánica de seguimiento de tendencia. Calcula el tamaño sobre ${money(s.risk_capital_ars)} destinados a renta variable, con volatilidad objetivo de ${numf(s.target_vol_pct)} % anual y un costo de ${numf(s.trade_cost_pct)} % por operación.`
+    : "Regla mecánica de seguimiento de tendencia, con el tamaño ajustado por volatilidad.";
+  const by = new Map(signals.map((x) => [x.symbol + "|" + x.market, x]));
+  fill("signals-body", watch.map((w) => {
+    const g = by.get(w.symbol + "|" + w.market);
+    const cur = w.market === "BCBA" ? "ARS" : "USD";
+    const tr = el("tr");
+    const first = el("td");
+    const asset = el("div", "asset");
+    const txt = el("div");
+    txt.append(el("div", "name", w.symbol), el("div", "sub", [w.name, w.market].filter(Boolean).join(" · ")));
+    asset.append(el("span", "avatar", String(w.symbol).slice(0, 4)), txt);
+    first.append(asset);
+    const sigTd = el("td");
+    if (!g) sigTd.append(el("span", "sub2", "Tocá Actualizar señales"));
+    else if (g.message) { sigTd.append(el("span", "sub2", g.message)); sigTd.style.whiteSpace = "normal"; }
+    else {
+      sigTd.append(el("span", "strong num", numf(g.forecast, 1)), document.createTextNode(" · " + signalWord(g.forecast)));
+      const m = el("span", "meter"); const bar = el("i"); bar.style.width = Math.max(0, Math.min(100, (g.forecast / 20) * 100)) + "%";
+      m.append(bar); m.setAttribute("role", "img"); m.setAttribute("aria-label", `Señal ${numf(g.forecast, 1)} de 20`);
+      sigTd.append(m);
+      sigTd.append(el("span", "sub2", `Rápida ${numf(g.f16, 1)} · media ${numf(g.f32, 1)} · lenta ${numf(g.f64, 1)}${g.as_of ? " · al " + new Date(g.as_of + "T12:00:00").toLocaleDateString("es-AR", { day: "numeric", month: "short" }) : ""}`));
+    }
+    const ok = g && !g.message;
+    const actions = el("td", "r");
+    const del = el("button", "btn btn-quiet", "Quitar");
+    del.type = "button";
+    del.setAttribute("aria-label", "Dejar de seguir " + w.symbol);
+    del.addEventListener("click", async () => {
+      del.disabled = true;
+      const { error } = await sb.from("inv_watchlist").delete().eq("symbol", w.symbol).eq("market", w.market);
+      if (error) { notice("No pude quitar " + w.symbol + ": " + error.message); del.disabled = false; return; }
+      load();
+    });
+    actions.append(del);
+    tr.append(first, td(ok ? money(g.price, cur) : "—", "r num"), td(ok ? pct(g.vol_pct) : "—", "r num"), sigTd,
+      td(ok ? money(g.target_value_ars) : "—", "r num strong"), td(ok ? "hasta " + numf(g.max_roundtrips, 1) : "—", "r num"), actions);
+    return tr;
+  }));
+}
+
+$("sig-btn").addEventListener("click", async () => {
+  const b = $("sig-btn");
+  b.disabled = true; b.textContent = "Calculando…";
+  const r = await callFn("iol-signals", {});
+  b.disabled = false; b.textContent = "Actualizar señales";
+  await load();
+  if (!r.ok) notice(r.error);
+  else notice(`Señales actualizadas: ${r.updated} ${r.updated === 1 ? "activo" : "activos"}.${r.message ? " " + r.message : ""}`, "ok");
+});
+
+$("sig-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const symbol = $("sig-symbol").value.trim().toUpperCase(), market = $("sig-market").value;
+  if (!/^[A-Z0-9._-]{1,12}$/.test(symbol)) { notice("Escribí el símbolo tal como figura en IOL, por ejemplo AAPL."); return; }
+  const { error } = await sb.from("inv_watchlist").insert({ symbol, market });
+  if (error) { notice(error.code === "23505" ? `Ya estás siguiendo ${symbol} en ${market}.` : "No pude agregarlo: " + error.message); return; }
+  notice("");
+  e.target.reset();
+  load();
+});
 
 // ---------- Operar ----------
 let settings = null;
