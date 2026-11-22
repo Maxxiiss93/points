@@ -129,6 +129,19 @@
   .form label { display: block; font-size: 13px; color: var(--subdued); margin-bottom: 6px; }
   .form input, .form select { width: 100%; height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--edge); background: var(--white); color: var(--ink); font: var(--w-text) 16px var(--font); }
   .form .btn { height: 44px; }
+  /* Operar: formulario + tarjeta de revisión */
+  .op { grid-template-columns: 1.4fr 1.4fr 1fr 1fr auto; }
+  .op[aria-disabled="true"] { opacity: .55; }
+  .review { margin-top: 16px; padding: 24px; background: var(--white); border: 1px solid var(--edge); border-radius: 12px; }
+  .review h3 { font: var(--w-strong) 20px/1.25 var(--font); letter-spacing: .01em; margin: 0 0 4px; text-wrap: balance; }
+  .review .sub { color: var(--subdued); margin: 0 0 16px; }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px 24px; margin: 0 0 16px; padding: 16px 0; border-top: 1px solid var(--edge); border-bottom: 1px solid var(--edge); }
+  .facts dt { color: var(--subdued); font-size: 13px; }
+  .facts dd { margin: 2px 0 0; font-weight: var(--w-strong); }
+  .review ul { margin: 0 0 16px; padding-left: 18px; color: var(--subdued); }
+  .review .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .review.bad { border-left: 3px solid var(--loss); }
+  .paused { margin-top: 12px; padding: 14px 16px; border-radius: 12px; background: var(--white); border: 1px solid var(--edge); border-left: 3px solid var(--subdued); }
   .foot { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--edge); color: var(--subdued); font-size: 14px; }
 
   @media (max-width: 760px) {
@@ -142,6 +155,10 @@
     .btn-quiet { height: 40px; }
     .form { grid-template-columns: 1fr 1fr; }
     .form .f-name, .form .btn { grid-column: 1 / -1; }
+    .op { grid-template-columns: 1fr 1fr; }
+    .review { padding: 20px 16px; }
+    .review .actions .btn { flex: 1 1 100%; }
+    #orders-table th:nth-child(3), #orders-table td:nth-child(3) { display: none; }
     .chapter { margin-top: 40px; }
     .chapter h2 { font-size: 22px; }
     /* En el celular cada tabla muestra solo lo esencial, sin scroll horizontal */
@@ -234,6 +251,33 @@
   <main class="wrap">
     <div class="notice" id="notice" role="alert" hidden></div>
 
+    <section class="chapter" aria-labelledby="h-op">
+      <div class="chapter-head">
+        <h2 id="h-op">Operar fondo de liquidez</h2>
+        <button type="button" class="btn btn-quiet" id="pause-btn">Pausar operaciones</button>
+      </div>
+      <p class="lead" id="op-lead">Suscribí o rescatá el fondo desde acá. Nada se envía a IOL hasta que confirmes.</p>
+      <div class="paused" id="paused" hidden><strong style="font-weight:var(--w-strong)">Operaciones pausadas.</strong> No se puede revisar ni enviar ninguna orden hasta que las reanudes.</div>
+      <form id="op-form" class="form op">
+        <div><label for="op-kind">Operación</label>
+          <select id="op-kind"><option value="subscription">Suscribir (invertir pesos)</option><option value="redemption">Rescatar (volver a pesos)</option></select></div>
+        <div><label for="op-symbol">Fondo</label><select id="op-symbol"></select></div>
+        <div id="op-amount-wrap"><label for="op-amount">Monto en pesos</label><input id="op-amount" type="number" inputmode="decimal" step="0.01" min="0"></div>
+        <div id="op-redeem-wrap" hidden><label for="op-redeem">Cuánto rescatar</label>
+          <select id="op-redeem"><option value="all">Todo</option><option value="qty">Algunas cuotapartes</option></select></div>
+        <div id="op-qty-wrap" hidden><label for="op-qty">Cuotapartes</label><input id="op-qty" type="number" inputmode="decimal" step="any" min="0"></div>
+        <button type="submit" class="btn btn-primary" id="op-review-btn">Revisar orden</button>
+      </form>
+      <div class="review" id="review" hidden aria-live="polite"></div>
+
+      <div class="scroller" id="orders-table" style="margin-top:24px" hidden>
+        <table>
+          <thead><tr><th scope="col">Orden</th><th scope="col" class="r">Monto</th><th scope="col">Fecha</th><th scope="col">Estado</th><th scope="col" class="r"><span class="sr">Acciones</span></th></tr></thead>
+          <tbody id="orders-body"></tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="chapter" aria-labelledby="h-pos">
       <div class="chapter-head">
         <h2 id="h-pos">Tenencias en IOL</h2>
@@ -296,7 +340,7 @@
       <div class="empty" id="log-empty" hidden><div><b>Sin registros</b>Cada sincronización queda anotada acá con su resultado.</div></div>
     </section>
 
-    <p class="foot">Etapa 1, solo lectura: este panel consulta tus cuentas y no envía órdenes de compra ni de venta.</p>
+    <p class="foot">Este panel solo envía órdenes del fondo de liquidez, y únicamente cuando las confirmás. No opera acciones, bonos, CEDEARs ni cauciones.</p>
   </main>
 </div>
 
@@ -357,15 +401,20 @@ function renderAlloc(parts) {
 }
 
 async function load() {
-  const [pos, bal, man, log] = await Promise.all([
+  const [pos, bal, man, log, set, fun, ord] = await Promise.all([
     sb.from("inv_positions").select("*").order("market_value", { ascending: false }),
     sb.from("inv_balances").select("*").order("country").order("currency"),
     sb.from("inv_manual").select("*").order("amount", { ascending: false }),
     sb.from("inv_sync_log").select("*").order("started_at", { ascending: false }).limit(5),
+    sb.from("inv_settings").select("*").maybeSingle(),
+    sb.from("inv_funds").select("*").eq("enabled", true).order("symbol"),
+    sb.from("inv_orders").select("*").order("created_at", { ascending: false }).limit(8),
   ]);
-  const failed = [pos, bal, man, log].find((r) => r.error);
+  const failed = [pos, bal, man, log, set, fun, ord].find((r) => r.error);
   if (failed) { notice("No pude leer los datos: " + failed.error.message); return; }
   const positions = pos.data, balances = bal.data, manual = man.data, logs = log.data;
+
+  renderTrading(set.data, fun.data || [], ord.data || []);
 
   // Tenencias
   fill("positions-body", positions.map((p) => {
@@ -483,6 +532,165 @@ async function load() {
   ]);
 }
 
+// ---------- Operar ----------
+let settings = null;
+let pendingOrder = null;
+const ORDER_STATE = {
+  reviewed: ["Sin confirmar", ""], rejected: ["Rechazada", "loss"], expired: ["Vencida", ""],
+  sending: ["Enviando", ""], sent: ["Enviada a IOL", "gain"], unknown: ["Resultado en duda", "loss"], cancelled: ["Anulada", ""],
+};
+const orderLabel = (o) => (o.kind === "subscription" ? "Suscripción" : "Rescate") + " · " + o.symbol;
+const orderAmount = (o) => o.kind === "subscription" ? money(o.amount) : o.redeem_all ? "Todo" : numf(o.quantity, 4) + " cuotapartes";
+
+function renderTrading(s, funds, orders) {
+  settings = s;
+  const paused = !s || !s.trading_enabled;
+  $("paused").hidden = !paused;
+  $("pause-btn").textContent = paused ? "Reanudar operaciones" : "Pausar operaciones";
+  $("op-form").setAttribute("aria-disabled", String(paused));
+  [...$("op-form").elements].forEach((e) => (e.disabled = paused));
+  if (paused) closeReview();
+  $("op-lead").textContent = s
+    ? `Suscribí o rescatá el fondo desde acá. Nada se envía a IOL hasta que confirmes. Tope: ${money(s.max_per_order_ars)} por orden y ${money(s.max_per_day_ars)} por día.`
+    : "No pude leer los ajustes de operación.";
+  const sel = $("op-symbol"), current = sel.value;
+  sel.replaceChildren(...funds.map((f) => { const o = el("option", "", `${f.symbol} · ${f.name}`); o.value = f.symbol; return o; }));
+  if (current) sel.value = current;
+
+  $("orders-table").hidden = orders.length === 0;
+  fill("orders-body", orders.map((o) => {
+    const [label, cls] = ORDER_STATE[o.status] || [o.status, ""];
+    const tr = el("tr");
+    const first = el("td");
+    first.append(el("div", "strong", orderLabel(o)), el("span", "sub2", o.message || ""));
+    first.style.whiteSpace = "normal";
+    const state = el("td");
+    state.append(el("span", "tag " + cls, label));
+    const actions = el("td", "r");
+    if (o.status === "sent" && o.transaction_id) {
+      const b = el("button", "btn btn-quiet", "Anular");
+      b.type = "button";
+      b.setAttribute("aria-label", "Anular " + orderLabel(o));
+      b.addEventListener("click", async () => {
+        if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.textContent = "¿Anular en IOL?"; setTimeout(() => { b.dataset.armed = ""; b.textContent = "Anular"; }, 4000); return; }
+        b.disabled = true;
+        const r = await callFci({ action: "cancel", order_id: o.id });
+        await load();
+        if (r.ok) notice("La orden quedó anulada en IOL.", "ok"); else notice(r.error);
+      });
+      actions.append(b);
+    }
+    tr.append(first, td(orderAmount(o), "r num strong"), td(when(o.created_at)), state, actions);
+    return tr;
+  }));
+}
+
+async function callFci(body) {
+  const { data, error } = await sb.functions.invoke("iol-fci", { method: "POST", body });
+  if (error) {
+    let payload = null;
+    try { payload = await error.context.json(); } catch (_) { /* sin cuerpo */ }
+    return { ok: false, error: payload?.error || payload?.message || error.message, ...(payload || {}) };
+  }
+  return data;
+}
+
+function closeReview() { pendingOrder = null; $("review").hidden = true; $("review").replaceChildren(); }
+
+function syncOpFields() {
+  const redeem = $("op-kind").value === "redemption";
+  $("op-amount-wrap").hidden = redeem;
+  $("op-redeem-wrap").hidden = !redeem;
+  $("op-qty-wrap").hidden = !redeem || $("op-redeem").value !== "qty";
+  closeReview();
+}
+$("op-kind").addEventListener("change", syncOpFields);
+$("op-redeem").addEventListener("change", syncOpFields);
+["op-amount", "op-qty", "op-symbol"].forEach((id) => $(id).addEventListener("input", closeReview));
+
+$("op-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const kind = $("op-kind").value, symbol = $("op-symbol").value;
+  const body = { action: "review", kind, symbol };
+  if (kind === "subscription") {
+    body.amount = Number($("op-amount").value);
+    if (!(body.amount > 0)) { notice("Ingresá el monto que querés suscribir."); $("op-amount").focus(); return; }
+  } else if ($("op-redeem").value === "all") {
+    body.redeem_all = true;
+  } else {
+    body.quantity = Number($("op-qty").value);
+    if (!(body.quantity > 0)) { notice("Ingresá cuántas cuotapartes querés rescatar."); $("op-qty").focus(); return; }
+  }
+  notice("");
+  const btn = $("op-review-btn");
+  btn.disabled = true; btn.textContent = "Revisando…";
+  const r = await callFci(body);
+  btn.disabled = false; btn.textContent = "Revisar orden";
+  if (!r.ok) { closeReview(); notice(r.error); load(); return; }
+  showReview(body, r);
+  load();
+});
+
+function showReview(body, r) {
+  const box = $("review");
+  const rv = r.review;
+  const what = body.kind === "subscription" ? `suscribir ${money(body.amount)}` : body.redeem_all ? "rescatar todo" : `rescatar ${numf(body.quantity, 4)} cuotapartes`;
+  box.className = "review" + (r.valid ? "" : " bad");
+  const title = el("h3", "", r.valid ? `Vas a ${what} en ${body.symbol}` : `IOL no acepta ${what} en ${body.symbol}`);
+  const sub = el("p", "sub", r.valid
+    ? "Todavía no se envió nada. Al confirmar, la orden sale hacia tu cuenta real de IOL."
+    : "No se envió nada. Este es el motivo que informó IOL:");
+  const facts = el("dl", "facts");
+  const fact = (k, v) => { const d = el("div"); d.append(el("dt", "", k), el("dd", "", v)); facts.append(d); };
+  fact("Fondo", rv.fund_name || body.symbol);
+  if (rv.minimum_investment !== null && rv.minimum_investment !== undefined) fact("Mínimo de inversión", money(rv.minimum_investment));
+  if (rv.settlement_term) fact("Plazo de liquidación", String(rv.settlement_term));
+  if (body.kind === "subscription" && rv.remaining_today_ars !== null) fact("Te queda para hoy", money(rv.remaining_today_ars));
+  const list = el("ul");
+  (rv.messages || []).forEach((m) => list.append(el("li", "", m)));
+  const actions = el("div", "actions");
+  if (r.valid) {
+    pendingOrder = r.order_id;
+    const go = el("button", "btn btn-primary", "Confirmar y enviar a IOL");
+    go.type = "button";
+    go.addEventListener("click", async () => {
+      if (!pendingOrder) return;
+      const id = pendingOrder;
+      pendingOrder = null;                       // evita el doble envío por doble toque
+      go.disabled = true;
+      go.replaceChildren(el("span", "spinner"), el("span", "", "Enviando…"));
+      const res = await callFci({ action: "confirm", order_id: id });
+      closeReview();
+      await sync(true);
+      if (res.ok) notice(`IOL recibió la orden${res.transaction_id ? " (operación " + res.transaction_id + ")" : ""}. ${res.message || ""}`, "ok");
+      else notice(res.error);
+    });
+    const no = el("button", "btn btn-quiet", "No enviar");
+    no.type = "button";
+    no.addEventListener("click", closeReview);
+    actions.append(go, no, el("span", "sub2", "La revisión vence en 5 minutos."));
+  } else {
+    const ok = el("button", "btn btn-quiet", "Entendido");
+    ok.type = "button";
+    ok.addEventListener("click", closeReview);
+    actions.append(ok);
+  }
+  box.replaceChildren(title, sub, facts, ...(list.children.length ? [list] : []), actions);
+  box.hidden = false;
+  box.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+$("pause-btn").addEventListener("click", async () => {
+  if (!settings) return;
+  const next = !settings.trading_enabled;
+  $("pause-btn").disabled = true;
+  const { error } = await sb.from("inv_settings").update({ trading_enabled: next, updated_at: new Date().toISOString() }).eq("id", true);
+  $("pause-btn").disabled = false;
+  if (error) { notice("No pude cambiar el estado: " + error.message); return; }
+  await load();
+  notice(next ? "Operaciones reanudadas." : "Operaciones pausadas. No se puede enviar ninguna orden.", "ok");
+});
+
 async function route() {
   const { data: { session } } = await sb.auth.getSession();
   if (!session) { show("view-login"); $("email").focus(); return; }
@@ -511,7 +719,7 @@ const logout = async () => { await sb.auth.signOut(); show("view-login"); };
 $("logout-btn").addEventListener("click", logout);
 $("denied-logout").addEventListener("click", logout);
 
-async function sync() {
+async function sync(quiet = false) {
   const btns = [$("sync-btn"), $("sync-btn-2")];
   btns.forEach((b) => (b.disabled = true));
   $("sync-btn").replaceChildren(el("span", "spinner"), el("span", "", "Sincronizando…"));
@@ -528,12 +736,13 @@ async function sync() {
   $("sync-btn").replaceChildren(el("span", "", "Sincronizar IOL"));
   btns.forEach((b) => (b.disabled = false));
   await load();
+  if (quiet === true) return;
   if (msg) { notice(msg); return; }
   const n = data?.ar ? `IOL informó ${data.ar.positions} ${data.ar.positions === 1 ? "tenencia" : "tenencias"} y ${data.ar.balances} ${data.ar.balances === 1 ? "saldo" : "saldos"}.` : "Datos de IOL actualizados.";
   notice(n + (data?.ar && data.ar.positions === 0 ? " Tu cuenta no tiene activos comprados por ahora." : ""), "ok");
 }
-$("sync-btn").addEventListener("click", sync);
-$("sync-btn-2").addEventListener("click", sync);
+$("sync-btn").addEventListener("click", () => sync());
+$("sync-btn-2").addEventListener("click", () => sync());
 
 $("manual-form").addEventListener("submit", async (e) => {
   e.preventDefault();
