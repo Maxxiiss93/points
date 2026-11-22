@@ -97,6 +97,7 @@
   main { padding: 8px 0 72px; }
   .notice { margin: 24px 0 0; padding: 14px 16px; border-radius: 12px; background: var(--white); border: 1px solid var(--edge); border-left: 3px solid var(--loss); color: var(--ink); }
   .notice strong { font-weight: var(--w-strong); }
+  .notice.ok { border-left-color: var(--gain); }
   .chapter { margin-top: 48px; }
   .chapter-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; border-top: 1px solid var(--edge); padding-top: 20px; margin-bottom: 8px; }
   .chapter h2 { font: var(--w-strong) 24px/1.2 var(--font); letter-spacing: .02em; margin: 0; }
@@ -248,7 +249,7 @@
         </table>
       </div>
       <div class="empty" id="positions-empty" hidden>
-        <div><b>Todavía no hay tenencias cargadas</b>Traé tus datos de IOL para verlos acá. Es solo lectura: no se envía ninguna orden.</div>
+        <div><b id="pos-empty-title">Todavía no hay tenencias cargadas</b><span id="pos-empty-text">Traé tus datos de IOL para verlos acá. Es solo lectura: no se envía ninguna orden.</span></div>
         <button class="btn btn-primary" id="sync-btn-2">Sincronizar IOL</button>
       </div>
     </section>
@@ -330,10 +331,11 @@ function el(tag, cls, text) {
 const td = (text, cls) => el("td", cls, text);
 const fill = (id, rows) => $(id).replaceChildren(...rows);
 
-function notice(text) {
+function notice(text, kind = "err") {
   const n = $("notice");
   n.replaceChildren();
-  if (text) { n.append(el("strong", "", "No salió. "), document.createTextNode(text)); }
+  n.className = "notice" + (kind === "ok" ? " ok" : "");
+  if (text) { n.append(el("strong", "", kind === "ok" ? "Listo. " : "No salió. "), document.createTextNode(text)); }
   n.hidden = !text;
   if (text) n.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
@@ -384,6 +386,12 @@ async function load() {
   }));
   $("positions-table").hidden = positions.length === 0;
   $("positions-empty").hidden = positions.length > 0;
+  const synced = logs.some((l) => l.ok);
+  $("pos-empty-title").textContent = synced ? "Tu cuenta de IOL no tiene inversiones" : "Todavía no hay tenencias cargadas";
+  $("pos-empty-text").textContent = synced
+    ? "La conexión funciona: IOL informa que hoy no tenés ningún activo comprado. Cuando inviertas desde IOL, sincronizá y aparece acá."
+    : "Traé tus datos de IOL para verlos acá. Es solo lectura: no se envía ninguna orden.";
+  $("sync-btn-2").hidden = synced;
   $("pos-count").textContent = positions.length ? `${positions.length} ${positions.length === 1 ? "activo" : "activos"}` : "";
 
   // Efectivo IOL
@@ -520,7 +528,9 @@ async function sync() {
   $("sync-btn").replaceChildren(el("span", "", "Sincronizar IOL"));
   btns.forEach((b) => (b.disabled = false));
   await load();
-  notice(msg);
+  if (msg) { notice(msg); return; }
+  const n = data?.ar ? `IOL informó ${data.ar.positions} ${data.ar.positions === 1 ? "tenencia" : "tenencias"} y ${data.ar.balances} ${data.ar.balances === 1 ? "saldo" : "saldos"}.` : "Datos de IOL actualizados.";
+  notice(n + (data?.ar && data.ar.positions === 0 ? " Tu cuenta no tiene activos comprados por ahora." : ""), "ok");
 }
 $("sync-btn").addEventListener("click", sync);
 $("sync-btn-2").addEventListener("click", sync);
